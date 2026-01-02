@@ -41,6 +41,27 @@ def static_files(path):
     return send_from_directory('static', path)
 
 
+@app.route('/ai-health', methods=['GET'])
+def ai_health():
+    """Check if Ollama is available for AI analysis."""
+    try:
+        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+        if response.status_code == 200:
+            return jsonify({
+                'available': True,
+                'url': OLLAMA_URL,
+                'model': OLLAMA_MODEL
+            })
+        else:
+            return jsonify({'available': False, 'reason': 'Ollama not responding'})
+    except requests.exceptions.ConnectionError:
+        return jsonify({'available': False, 'reason': 'Cannot connect to Ollama'})
+    except requests.exceptions.Timeout:
+        return jsonify({'available': False, 'reason': 'Ollama timeout'})
+    except Exception as e:
+        return jsonify({'available': False, 'reason': str(e)})
+
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     """Analyze uploaded GC log files."""

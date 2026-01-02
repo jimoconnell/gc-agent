@@ -128,6 +128,9 @@ function displayResults() {
 
     // Display events table
     displayEventsTable();
+    
+    // Auto-start agentic analysis if AI is available
+    autoStartAgenticAnalysis();
 }
 
 function updateSummaryCards(stats, summary) {
@@ -822,6 +825,84 @@ async function runAIAnalysis() {
         btn.disabled = false;
         agenticBtn.disabled = false;
         btn.innerHTML = '<span class="btn-icon">✨</span> Quick Analysis';
+    }
+}
+
+// Auto-start agentic analysis if Ollama is available
+async function autoStartAgenticAnalysis() {
+    // First check if Ollama is reachable
+    try {
+        const healthCheck = await fetch('/ai-health', { 
+            method: 'GET',
+            signal: AbortSignal.timeout(3000)  // 3 second timeout
+        });
+        
+        if (!healthCheck.ok) {
+            console.log('AI not available, skipping auto-analysis');
+            return;
+        }
+        
+        const health = await healthCheck.json();
+        if (!health.available) {
+            console.log('Ollama not running, skipping auto-analysis');
+            return;
+        }
+        
+        // Ollama is available - show indicator and start analysis
+        console.log('Ollama available, auto-starting agentic analysis');
+        
+        // Update AI tab to show analysis is starting
+        const aiTab = document.querySelector('.tab.ai-tab');
+        if (aiTab) {
+            aiTab.innerHTML = '🤖 AI Analysis <span class="auto-analyzing">●</span>';
+        }
+        
+        // Update the AI panel to show it's auto-analyzing
+        const container = document.getElementById('ai-analysis');
+        container.innerHTML = `
+            <div class="ai-auto-start">
+                <div class="ai-loading">
+                    <div class="spinner"></div>
+                    <div class="ai-loading-text">
+                        🔬 Agent is automatically investigating your GC logs...<br>
+                        <small style="color: var(--text-muted);">You can explore the charts while this runs</small>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Run the agentic analysis
+        const response = await fetch('/agentic-analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(analysisData)
+        });
+        
+        const result = await response.json();
+        
+        // Restore AI tab text
+        if (aiTab) {
+            aiTab.innerHTML = '🤖 AI Analysis <span class="analysis-ready">✓</span>';
+        }
+        
+        if (result.error) {
+            container.innerHTML = `<div class="ai-error">❌ ${escapeHtml(result.error)}</div>`;
+        } else {
+            displayAgenticResult(result);
+            if (result.model) {
+                document.getElementById('ai-model-badge').textContent = result.model;
+            }
+        }
+        
+    } catch (error) {
+        // Silently fail - AI is optional
+        console.log('Auto-analysis skipped:', error.message);
+        
+        // Restore AI tab if it was modified
+        const aiTab = document.querySelector('.tab.ai-tab');
+        if (aiTab) {
+            aiTab.innerHTML = '🤖 AI Analysis';
+        }
     }
 }
 

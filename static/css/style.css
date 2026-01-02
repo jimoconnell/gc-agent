@@ -903,6 +903,29 @@ header {
     color: var(--severity-critical);
 }
 
+/* Auto-analyzing indicator */
+.auto-analyzing {
+    color: var(--accent-cyan);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+    margin-left: 6px;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+}
+
+.analysis-ready {
+    color: var(--accent-green);
+    margin-left: 6px;
+}
+
+.ai-auto-start {
+    border-left: 3px solid var(--accent-cyan);
+    margin: 1rem;
+    padding-left: 1rem;
+}
+
 /* AI Chat */
 .ai-chat {
     border-top: 1px solid var(--border-color);

@@ -60,6 +60,18 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
             tab.classList.add('active');
             document.getElementById(tab.dataset.panel + '-panel').classList.add('active');
+            
+            // Re-render charts when their tabs become visible (they need visible width)
+            if (analysisData) {
+                if (tab.dataset.panel === 'overview') {
+                    setTimeout(() => {
+                        displayPauseChart();
+                        displayHeapChart();
+                    }, 50);
+                } else if (tab.dataset.panel === 'timeline') {
+                    setTimeout(() => displayTimelineChart(), 50);
+                }
+            }
         });
     });
 });

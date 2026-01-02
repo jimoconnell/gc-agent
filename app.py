@@ -2,7 +2,7 @@
 """
 GC Agent - Agentic AI-powered JVM Garbage Collection analysis
 Visualize GC activity, detect issues, and get autonomous AI-powered tuning recommendations.
-https://github.com/hazelcast/gc-agent
+https://github.com/jimoconnell/gc-agent
 """
 
 import os

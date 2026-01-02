@@ -52,7 +52,7 @@ This provides deeper investigation than a single-shot prompt, with a visible tra
 ### Installation
 
 ```bash
-git clone https://github.com/hazelcast/gc-agent.git
+git clone https://github.com/jimoconnell/gc-agent.git
 cd gc-agent
 
 # Run the application

@@ -109,6 +109,7 @@ function displayResults() {
     displayPauseChart();
     displayHeapChart();
     displayDistributionChart();
+    displayTimelineChart();
 
     // Display issues
     displayIssues();
@@ -460,6 +461,143 @@ function displayHeapChart() {
     svg += `<text x="${width - 130}" y="38" fill="#e6edf3" font-size="11">Before GC</text>`;
     svg += `<line x1="${width - 150}" y1="52" x2="${width - 138}" y2="52" stroke="#6e7681" stroke-width="2" stroke-dasharray="3,3"/>`;
     svg += `<text x="${width - 130}" y="56" fill="#e6edf3" font-size="11">Total Heap</text>`;
+
+    svg += '</svg>';
+    container.innerHTML = svg;
+}
+
+function displayTimelineChart() {
+    const container = document.getElementById('timeline-chart');
+    const events = analysisData.events.filter(e => e.pause_ms > 0);
+    
+    if (events.length === 0) {
+        container.innerHTML = '<div class="empty-state">No GC events to display</div>';
+        return;
+    }
+
+    const width = container.clientWidth;
+    const height = 380;
+    const padding = { top: 30, right: 30, bottom: 80, left: 80 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+
+    // Determine time scale
+    const hasTimestamps = events.some(e => e.timestamp);
+    const hasUptime = events.some(e => e.uptime_seconds !== null && e.uptime_seconds !== undefined);
+    
+    let timeValues = [];
+    let timeLabel = 'Event #';
+    
+    if (hasTimestamps) {
+        timeValues = events.map(e => new Date(e.timestamp).getTime());
+        timeLabel = 'Time';
+    } else if (hasUptime) {
+        timeValues = events.map(e => e.uptime_seconds || 0);
+        timeLabel = 'Uptime';
+    } else {
+        timeValues = events.map((e, i) => i);
+    }
+    
+    const minTime = Math.min(...timeValues);
+    const maxTime = Math.max(...timeValues);
+    const timeRange = maxTime - minTime || 1;
+    
+    const maxPause = Math.max(...events.map(e => e.pause_ms));
+    const maxHeap = Math.max(...events.map(e => e.heap_total_mb || 0));
+
+    let svg = `<svg width="${width}" height="${height}" style="font-family: inherit;">`;
+    
+    // Title
+    svg += `<text x="${width / 2}" y="20" text-anchor="middle" fill="#e6edf3" font-size="14" font-weight="600">GC Activity Timeline</text>`;
+    
+    // Y-axis grid lines (pause time)
+    const yTicks = 5;
+    for (let i = 0; i <= yTicks; i++) {
+        const y = padding.top + (chartHeight / yTicks) * i;
+        const value = maxPause - (maxPause / yTicks) * i;
+        svg += `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#30363d" stroke-width="1"/>`;
+        svg += `<text x="${padding.left - 10}" y="${y + 4}" text-anchor="end" fill="#8b949e" font-size="10">${formatMs(value)}</text>`;
+    }
+    
+    // X-axis time labels
+    const xTicks = Math.min(10, events.length);
+    const tickInterval = Math.floor(events.length / xTicks) || 1;
+    
+    for (let i = 0; i < events.length; i += tickInterval) {
+        const x = padding.left + ((timeValues[i] - minTime) / timeRange) * chartWidth;
+        const event = events[i];
+        
+        let label = '';
+        if (hasTimestamps && event.timestamp) {
+            const d = new Date(event.timestamp);
+            label = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } else if (hasUptime && event.uptime_seconds !== null) {
+            label = formatUptime(event.uptime_seconds);
+        } else {
+            label = `#${i + 1}`;
+        }
+        
+        svg += `<line x1="${x}" y1="${padding.top + chartHeight}" x2="${x}" y2="${padding.top + chartHeight + 5}" stroke="#8b949e" stroke-width="1"/>`;
+        svg += `<text x="${x}" y="${height - padding.bottom + 25}" text-anchor="middle" fill="#8b949e" font-size="10" transform="rotate(-45, ${x}, ${height - padding.bottom + 25})">${label}</text>`;
+    }
+    
+    // Draw heap usage as area chart (background)
+    if (maxHeap > 0) {
+        let heapPath = `M ${padding.left} ${padding.top + chartHeight}`;
+        events.forEach((event, i) => {
+            const x = padding.left + ((timeValues[i] - minTime) / timeRange) * chartWidth;
+            const heapPct = (event.heap_after_mb || 0) / maxHeap;
+            const y = padding.top + chartHeight - (heapPct * chartHeight * 0.3); // Scale to 30% of chart height
+            heapPath += ` L ${x} ${y}`;
+        });
+        heapPath += ` L ${padding.left + chartWidth} ${padding.top + chartHeight} Z`;
+        svg += `<path d="${heapPath}" fill="rgba(88, 166, 255, 0.1)" stroke="none"/>`;
+    }
+    
+    // Draw pause times as vertical bars/lollipops
+    events.forEach((event, i) => {
+        const x = padding.left + ((timeValues[i] - minTime) / timeRange) * chartWidth;
+        const barHeight = (event.pause_ms / maxPause) * chartHeight;
+        const y = padding.top + chartHeight - barHeight;
+        
+        let color = '#3fb950';  // healthy
+        if (event.pause_ms > 500) color = '#f85149';  // critical
+        else if (event.pause_ms > 200) color = '#d29922';  // warning
+        else if (event.pause_ms > 50) color = '#58a6ff';  // info
+        
+        if (event.is_full_gc) color = '#f85149';
+        
+        // Stem
+        svg += `<line x1="${x}" y1="${padding.top + chartHeight}" x2="${x}" y2="${y}" stroke="${color}" stroke-width="2" opacity="0.7"/>`;
+        
+        // Circle at top
+        const radius = event.is_full_gc ? 6 : 4;
+        const timeInfo = event.timestamp 
+            ? new Date(event.timestamp).toLocaleString() 
+            : (event.uptime_seconds ? `Uptime: ${formatUptime(event.uptime_seconds)}` : '');
+        
+        svg += `<circle cx="${x}" cy="${y}" r="${radius}" fill="${color}" opacity="0.9">
+            <title>${event.pause_type || event.gc_type}: ${event.pause_ms.toFixed(2)}ms\n${timeInfo}${event.is_full_gc ? '\n⚠️ Full GC' : ''}${event.cause ? '\nCause: ' + event.cause : ''}</title>
+        </circle>`;
+    });
+    
+    // Legend
+    const legendY = height - 25;
+    svg += `<circle cx="${padding.left}" cy="${legendY}" r="4" fill="#3fb950"/>`;
+    svg += `<text x="${padding.left + 10}" y="${legendY + 4}" fill="#8b949e" font-size="10">Normal</text>`;
+    
+    svg += `<circle cx="${padding.left + 70}" cy="${legendY}" r="4" fill="#58a6ff"/>`;
+    svg += `<text x="${padding.left + 80}" y="${legendY + 4}" fill="#8b949e" font-size="10">>50ms</text>`;
+    
+    svg += `<circle cx="${padding.left + 140}" cy="${legendY}" r="4" fill="#d29922"/>`;
+    svg += `<text x="${padding.left + 150}" y="${legendY + 4}" fill="#8b949e" font-size="10">>200ms</text>`;
+    
+    svg += `<circle cx="${padding.left + 220}" cy="${legendY}" r="6" fill="#f85149"/>`;
+    svg += `<text x="${padding.left + 232}" y="${legendY + 4}" fill="#8b949e" font-size="10">>500ms / Full GC</text>`;
+    
+    // Axis labels
+    svg += `<text x="${padding.left - 50}" y="${padding.top + chartHeight / 2}" text-anchor="middle" fill="#8b949e" font-size="11" transform="rotate(-90, ${padding.left - 50}, ${padding.top + chartHeight / 2})">Pause Time</text>`;
+    svg += `<text x="${padding.left + chartWidth / 2}" y="${height - 5}" text-anchor="middle" fill="#8b949e" font-size="11">${timeLabel}</text>`;
 
     svg += '</svg>';
     container.innerHTML = svg;

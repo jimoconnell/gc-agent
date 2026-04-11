@@ -149,8 +149,8 @@ function updateSummaryCards(stats, summary) {
             <div class="summary-value" style="font-size: 1.25rem;">${analysisData.collector_type}</div>
         </div>
         <div class="summary-card">
-            <div class="summary-label">GC Events</div>
-            <div class="summary-value">${(stats.total_gc_events || 0).toLocaleString()}</div>
+            <div class="summary-label">STW pauses</div>
+            <div class="summary-value">${(stats.pause_events || 0).toLocaleString()}${(stats.concurrent_gc_count || 0) > 0 ? `<span class="summary-sub"> +${stats.concurrent_gc_count} concurrent</span>` : ''}</div>
         </div>
         <div class="summary-card ${stats.full_gc_count > 5 ? 'critical' : ''}">
             <div class="summary-label">Full GCs</div>

@@ -26,7 +26,7 @@ UNIFIED_GC_START = re.compile(
 )
 
 UNIFIED_GC_PAUSE = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>\w+(?:\s+\([^)]+\))?)\s+.*?(?P<pause_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>\w+(?:\s+\([^)]+\))?)\s+.*?(?P<pause_ms>\d+(?:[.,]\d+)?)\s*ms\s*$'
 )
 
 UNIFIED_HEAP = re.compile(
@@ -42,43 +42,43 @@ JDK8_TIMESTAMP = re.compile(
 JDK8_GC_EVENT = re.compile(
     r'\[(?P<gc_type>GC|Full GC)\s*(?:\((?P<cause>[^)]+)\))?\s*'
     r'(?:(?P<heap_before>\d+)K->(?P<heap_after>\d+)K\((?P<heap_total>\d+)K\))?,?\s*'
-    r'(?:(?P<pause_ms>\d+(?:\.\d+)?)\s*(?:secs|ms))?\]'
+    r'(?:(?P<pause_ms>\d+(?:[.,]\d+)?)\s*(?:secs|ms))?\]'
 )
 
-# G1GC Specific Patterns
+# G1GC Specific Patterns (pause_ms anchored at EOL so heap sizes like 3488M are not matched)
 G1_PAUSE = re.compile(
     r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>Young|Mixed|Full|Remark|Cleanup)'
-    r'(?:\s+\((?P<cause>[^)]+)\))?.*?(?P<pause_ms>\d+(?:\.\d+)?)\s*ms'
+    r'(?:\s+\((?P<cause>[^)]+)\))?.*?(?P<pause_ms>\d+(?:[.,]\d+)?)\s*ms\s*$'
 )
 
 G1_CONCURRENT = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+Concurrent\s+(?P<phase>\w+(?:\s+\w+)*)\s+(?P<duration_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+Concurrent\s+(?P<phase>\w+(?:\s+\w+)*)\s+(?P<duration_ms>\d+(?:[.,]\d+)?)\s*ms'
 )
 
 G1_PHASE = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+(?P<phase>Pre Evacuate|Evacuate|Post Evacuate|Other):\s+(?P<duration_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+(?P<phase>Pre Evacuate|Evacuate|Post Evacuate|Other):\s+(?P<duration_ms>\d+(?:[.,]\d+)?)\s*ms'
 )
 
 # ZGC Specific Patterns
 ZGC_PAUSE = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>\w+(?:\s+\w+)*)\s+(?P<pause_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>\w+(?:\s+\w+)*)\s+.*?(?P<pause_ms>\d+(?:[.,]\d+)?)\s*ms\s*$'
 )
 
 ZGC_CONCURRENT = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+Concurrent\s+(?P<phase>\w+(?:\s+\w+)*)\s+(?P<duration_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+Concurrent\s+(?P<phase>\w+(?:\s+\w+)*)\s+(?P<duration_ms>\d+(?:[.,]\d+)?)\s*ms'
 )
 
 ZGC_STATS = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+(?:Used|Capacity|Free|Waste):\s+(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>[KMG])?B?'
+    r'GC\((?P<gc_id>\d+)\)\s+(?:Used|Capacity|Free|Waste):\s+(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>[KMG])?B?'
 )
 
 # Shenandoah Patterns
 SHENANDOAH_PAUSE = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>\w+(?:\s+\([^)]+\))?)\s+(?P<pause_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+Pause\s+(?P<pause_type>\w+(?:\s+\([^)]+\))?)\s+.*?(?P<pause_ms>\d+(?:[.,]\d+)?)\s*ms\s*$'
 )
 
 SHENANDOAH_CONCURRENT = re.compile(
-    r'GC\((?P<gc_id>\d+)\)\s+Concurrent\s+(?P<phase>\w+)\s+(?P<duration_ms>\d+(?:\.\d+)?)\s*ms'
+    r'GC\((?P<gc_id>\d+)\)\s+Concurrent\s+(?P<phase>\w+)\s+(?P<duration_ms>\d+(?:[.,]\d+)?)\s*ms'
 )
 
 # Parallel/CMS/Serial Patterns
@@ -100,6 +100,29 @@ HEAP_SUMMARY = re.compile(
 ALLOCATION_FAILURE = re.compile(r'Allocation\s+Failure|to-space\s+exhausted|evacuation\s+failure', re.IGNORECASE)
 
 SAFEPOINT = re.compile(r'safepoint|Total\s+time\s+for\s+which\s+application\s+threads\s+were\s+stopped', re.IGNORECASE)
+
+
+def parse_jvm_ms(value: str) -> float:
+    """
+    Parse a duration from JVM unified logging. Uses the JVM's locale, so the
+    fractional separator may be '.' (e.g. 12.288ms) or ',' (e.g. 12,288ms).
+    """
+    s = value.strip()
+    if not s:
+        return 0.0
+    if "," in s and "." in s:
+        # Prefer the rightmost separator as decimal (handles rare mixed forms).
+        if s.rfind(".") > s.rfind(","):
+            s = s.replace(",", "")
+        else:
+            s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        parts = s.split(",")
+        if len(parts) == 2:
+            s = f"{parts[0]}.{parts[1]}"
+        else:
+            s = "".join(parts[:-1]) + "." + parts[-1]
+    return float(s)
 
 
 def normalize_size(value: float, unit: str) -> float:
@@ -217,6 +240,14 @@ class GCLogParser:
         else:
             return "Unknown"
     
+    def _elapsed_seconds(self) -> float:
+        """JVM uptime if present; otherwise wall time between first and last parsed timestamps."""
+        if self.total_uptime_seconds > 0:
+            return self.total_uptime_seconds
+        if self.start_time and self.end_time:
+            return max(0.0, (self.end_time - self.start_time).total_seconds())
+        return 0.0
+    
     def parse(self) -> Dict[str, Any]:
         """Parse the GC log and return structured data."""
         self.collector_type = self.detect_collector()
@@ -236,6 +267,7 @@ class GCLogParser:
         # Detect issues
         issues = self._detect_issues()
         
+        elapsed = self._elapsed_seconds()
         return {
             'collector_type': self.collector_type,
             'jvm_version': self.jvm_version,
@@ -243,6 +275,7 @@ class GCLogParser:
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
             'total_uptime_seconds': self.total_uptime_seconds,
+            'wall_clock_seconds': round(elapsed, 3) if elapsed > 0 else None,
             'events': [e.to_dict() for e in self.events],
             'statistics': stats,
             'issues': issues,
@@ -288,11 +321,12 @@ class GCLogParser:
                 event.timestamp = timestamp
                 event.uptime_seconds = uptime
                 event.pause_type = pause_match.group('pause_type')
-                event.pause_ms = float(pause_match.group('pause_ms'))
+                event.pause_ms = parse_jvm_ms(pause_match.group('pause_ms'))
                 event.gc_type = self.collector_type
                 event.cause = pause_match.group('cause') if 'cause' in pause_match.groupdict() and pause_match.group('cause') else ""
                 event.is_full_gc = 'full' in event.pause_type.lower()
                 event.raw_lines.append(line)
+                self._apply_heap_match(event, line)
                 
                 # Check for issues
                 if ALLOCATION_FAILURE.search(line):
@@ -329,11 +363,28 @@ class GCLogParser:
                 event.uptime_seconds = uptime
                 event.gc_type = self.collector_type
                 event.is_concurrent = True
-                event.concurrent_ms = float(concurrent_match.group('duration_ms'))
+                event.concurrent_ms = parse_jvm_ms(concurrent_match.group('duration_ms'))
                 event.pause_type = f"Concurrent {concurrent_match.group('phase')}"
                 event.raw_lines.append(line)
                 self.events.append(event)
                 continue
+    
+    def _apply_heap_match(self, event: GCEvent, line: str) -> None:
+        """Fill heap sizes from the same line when present (typical for G1 pause summaries)."""
+        heap_match = UNIFIED_HEAP.search(line)
+        if heap_match and int(heap_match.group('gc_id')) == event.gc_id:
+            event.heap_before_mb = normalize_size(
+                float(heap_match.group('heap_before')),
+                heap_match.group('before_unit'),
+            )
+            event.heap_after_mb = normalize_size(
+                float(heap_match.group('heap_after')),
+                heap_match.group('after_unit'),
+            )
+            event.heap_total_mb = normalize_size(
+                float(heap_match.group('heap_total')),
+                heap_match.group('total_unit'),
+            )
     
     def _parse_legacy_format(self):
         """Parse JDK 8 and earlier GC log format."""
@@ -370,7 +421,7 @@ class GCLogParser:
                 if gc_match.group('heap_total'):
                     event.heap_total_mb = float(gc_match.group('heap_total')) / 1024
                 if gc_match.group('pause_ms'):
-                    pause = float(gc_match.group('pause_ms'))
+                    pause = parse_jvm_ms(gc_match.group('pause_ms'))
                     # Convert seconds to ms if needed
                     if 'secs' in line:
                         pause *= 1000
@@ -436,15 +487,16 @@ class GCLogParser:
             stats['max_heap_used_mb'] = round(max(h[0] for h in heap_usages), 2)
             stats['avg_heap_used_mb'] = round(sum(h[0] for h in heap_usages) / len(heap_usages), 2)
         
-        # Calculate throughput
-        if self.total_uptime_seconds > 0:
+        # Calculate throughput (prefer JVM uptime; else wall clock from timestamps)
+        elapsed = self._elapsed_seconds()
+        if elapsed > 0:
             gc_time_seconds = total_pause_ms / 1000
-            throughput = ((self.total_uptime_seconds - gc_time_seconds) / self.total_uptime_seconds) * 100
+            throughput = ((elapsed - gc_time_seconds) / elapsed) * 100
             stats['throughput_percent'] = round(throughput, 2)
         
         # GC frequency
-        if self.total_uptime_seconds > 0 and pause_events:
-            stats['gc_frequency_per_minute'] = round((len(pause_events) / self.total_uptime_seconds) * 60, 2)
+        if elapsed > 0 and pause_events:
+            stats['gc_frequency_per_minute'] = round((len(pause_events) / elapsed) * 60, 2)
         
         # Pause time distribution
         if pause_times:
@@ -505,8 +557,9 @@ class GCLogParser:
             })
         
         # High GC frequency
-        if self.total_uptime_seconds > 60:
-            gc_per_minute = (len(pause_events) / self.total_uptime_seconds) * 60
+        elapsed = self._elapsed_seconds()
+        if elapsed > 60:
+            gc_per_minute = (len(pause_events) / elapsed) * 60
             if gc_per_minute > 10:
                 issues.append({
                     'type': 'high_gc_frequency',
@@ -516,9 +569,10 @@ class GCLogParser:
                 })
         
         # Low throughput
-        if self.total_uptime_seconds > 60 and pause_events:
+        elapsed = self._elapsed_seconds()
+        if elapsed > 60 and pause_events:
             total_pause_seconds = sum(e.pause_ms for e in pause_events) / 1000
-            throughput = ((self.total_uptime_seconds - total_pause_seconds) / self.total_uptime_seconds) * 100
+            throughput = ((elapsed - total_pause_seconds) / elapsed) * 100
             if throughput < 95:
                 issues.append({
                     'type': 'low_throughput',
